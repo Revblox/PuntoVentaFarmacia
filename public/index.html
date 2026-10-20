@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Punto de Venta · Farmacia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ======== Pantallas de arranque ======== -->
+<div class="screen open" id="boot"><div class="spinner"></div></div>
+
+<div class="screen" id="setup">
+  <div class="auth-card setup-card">
+    <div class="logo"><span class="mi">cloud_off</span></div>
+    <h1>Falta conectar Firebase</h1>
+    <div class="sub">Pega la configuración de tu proyecto para usar la base de datos compartida.</div>
+    <ol>
+      <li>Crea un proyecto en <code>console.firebase.google.com</code>.</li>
+      <li>Activa <b>Authentication → Correo/contraseña</b> y crea <b>Firestore Database</b>.</li>
+      <li>Agrega una app web y copia el <code>firebaseConfig</code> en <code>public/firebase-config.js</code>.</li>
+      <li>Despliega las reglas con <code>firebase deploy --only firestore:rules</code>.</li>
+    </ol>
+    <div class="auth-note">Los pasos completos están en el README.</div>
+  </div>
+</div>
+
+<div class="screen" id="auth">
+  <div class="auth-card">
+    <div class="logo"><span class="mi">local_pharmacy</span></div>
+    <h1>Farmacia</h1>
+    <div class="sub">Inicia sesión para continuar</div>
+    <div class="seg" id="authTabs">
+      <button data-tab="login" class="active">Iniciar sesión</button>
+      <button data-tab="register">Crear cuenta</button>
+    </div>
+    <form class="form" id="authForm" autocomplete="on">
+      <label id="nameField" style="display:none">Nombre<input id="aName" autocomplete="name" placeholder="Tu nombre"></label>
+      <label>Usuario<input id="aUser" autocomplete="username" placeholder="usuario" autocapitalize="none" spellcheck="false"></label>
+      <label>Contraseña<input id="aPass" type="password" autocomplete="current-password" placeholder="Mínimo 6 caracteres"></label>
+      <div class="auth-error" id="authError"></div>
+      <button class="btn primary block" id="authBtn">Entrar</button>
+    </form>
+    <div class="auth-note" id="authNote">Las cuentas nuevas son de cliente.</div>
+  </div>
+</div>
+
+<div class="screen" id="noprofile">
+  <div class="auth-card" style="text-align:center">
+    <div class="logo"><span class="mi">person_off</span></div>
+    <h1>Cuenta sin perfil</h1>
+    <div class="sub">Tu usuario existe pero no tiene perfil en la base de datos. Pídele al administrador que lo cree.</div>
+    <button class="btn block" id="noprofileOut">Cerrar sesión</button>
+  </div>
+</div>
+
+<!-- ======== App ======== -->
+<div class="app" id="app" style="display:none">
+  <nav class="nav" id="nav"></nav>
+
+  <main>
+    <!-- VENTA / TIENDA -->
+    <section id="view-pos" class="view view-pos active">
+      <div class="pos">
+        <div class="catalog">
+          <div class="catalog-head">
+            <div>
+              <h1 id="posTitle">Nueva venta</h1>
+              <div class="sub" id="today"></div>
+            </div>
+            <label class="search">
+              <span class="mi">search</span>
+              <input id="q" type="text" placeholder="Buscar producto…" autocomplete="off">
+              <kbd>/</kbd>
+            </label>
+          </div>
+          <div class="chips" id="chips"></div>
+          <div class="grid" id="grid"></div>
+        </div>
+
+        <aside class="card cart">
+          <div class="cart-head">
+            <h2 id="cartTitle">Venta actual</h2>
+            <button class="btn danger" style="height:32px;padding:0 12px;font-size:13px" id="clearCart">Vaciar</button>
+          </div>
+          <div class="cart-lines" id="lines"></div>
+          <div class="summary">
+            <div class="row"><span class="muted">Subtotal</span><span class="num" id="sSub">$0.00</span></div>
+            <div class="row admin-only">
+              <span class="muted">Descuento</span>
+              <span style="display:flex;gap:10px;align-items:center">
+                <span class="field-inline"><input id="disc" type="number" min="0" max="100" value="0" inputmode="decimal">%</span>
+                <span class="num muted" id="sDisc">−$0.00</span>
+              </span>
+            </div>
+            <div class="row total"><span>Total</span><span class="num" id="sTotal">$0.00</span></div>
+
+            <div class="seg" id="method"></div>
+            <div class="cash admin-only" id="cashBox">
+              <div class="money-input"><span class="muted">$</span><input id="received" type="number" min="0" step="0.01" placeholder="Recibido" inputmode="decimal"></div>
+              <div class="quick" id="quick"></div>
+              <div class="row"><span class="muted">Cambio</span><span class="num change" id="sChange">$0.00</span></div>
+            </div>
+            <label class="rx-check" id="rxBox" style="display:none">
+              <input type="checkbox" id="rxOk">
+              <span id="rxText">Incluye medicamento con receta. Confirmo que la receta fue revisada.</span>
+            </label>
+            <button class="btn primary block" id="payBtn" disabled>Cobrar</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- INVENTARIO (admin) -->
+    <section id="view-inventory" class="view">
+      <div class="page-head">
+        <div><h1>Inventario</h1><div class="sub" id="invSub"></div></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <label class="search"><span class="mi">search</span><input id="invQ" type="text" placeholder="Buscar producto…"></label>
+          <button class="btn primary" id="newProduct"><span class="mi">add</span>Producto</button>
+        </div>
+      </div>
+      <div class="card table-wrap" style="padding:20px 8px 8px">
+        <table>
+          <thead><tr><th>Producto</th><th>Categoría</th><th class="r">Precio</th><th class="r">Existencia</th><th>Caducidad</th><th></th></tr></thead>
+          <tbody id="invBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- HISTORIAL / MIS COMPRAS -->
+    <section id="view-history" class="view">
+      <div class="page-head">
+        <div><h1 id="histTitle">Historial de ventas</h1><div class="sub" id="histSub"></div></div>
+        <div class="seg" id="histRange" style="min-width:260px">
+          <button data-r="today" class="active">Hoy</button>
+          <button data-r="week">7 días</button>
+          <button data-r="all">Todo</button>
+        </div>
+      </div>
+      <div class="card table-wrap" style="padding:20px 8px 8px">
+        <table>
+          <thead><tr><th>Folio</th><th>Fecha</th><th class="admin-only">Cliente</th><th>Artículos</th><th>Pago</th><th class="r">Total</th></tr></thead>
+          <tbody id="histBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- RESUMEN (admin) -->
+    <section id="view-dashboard" class="view">
+      <div class="page-head">
+        <div><h1>Resumen</h1><div class="sub">Datos en vivo de toda la farmacia</div></div>
+      </div>
+      <div class="tiles" id="tiles"></div>
+      <div class="cols">
+        <div class="card"><h2>Últimos 7 días</h2><div class="bars" id="bars"></div></div>
+        <div class="card"><h2>Más vendidos · 7 días</h2><div id="top" style="margin-top:8px"></div></div>
+      </div>
+      <div class="cols">
+        <div class="card"><h2>Pocas existencias</h2><div id="low" style="margin-top:8px"></div></div>
+        <div class="card"><h2>Caducidad próxima</h2><div id="expiring" style="margin-top:8px"></div></div>
+      </div>
+    </section>
+
+    <!-- USUARIOS (admin) -->
+    <section id="view-users" class="view">
+      <div class="page-head">
+        <div><h1>Usuarios</h1><div class="sub" id="usersSub"></div></div>
+        <button class="btn primary" id="newUser"><span class="mi">person_add</span>Usuario</button>
+      </div>
+      <div class="card table-wrap" style="padding:20px 8px 8px">
+        <table>
+          <thead><tr><th>Nombre</th><th>Usuario</th><th>Alta</th><th>Rol</th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

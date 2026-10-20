@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Perfiles: cada quien lee el suyo, el admin lee y administra todos.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      // Auto-registro: solo puede crear SU perfil y siempre como cliente.
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'cliente'
+        && request.resource.data.keys().hasOnly(['username', 'name', 'role', 'createdAt']);
+      // El admin crea cuentas de personal y cambia roles.
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Catálogo: todos lo ven; el admin lo administra.
+    // Un cliente solo puede BAJAR el stock (compra), nunca subirlo ni tocar otros campos.
+    match /products/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAt'])
+        && request.resource.data.stock is int
+        && request.resource.data.stock >= 0
+        && request.resource.data.stock < resource.data.stock
+      );
+    }
+
+    // Ventas: el admin ve todas; cada cliente solo las suyas. Son inmutables.
+    match /sales/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Folio consecutivo: solo puede avanzar de uno en uno.
+    match /counters/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.last == 1;
+      allow update: if signedIn() && request.resource.data.last == resource.data.last + 1;
+      allow delete: if false;
+    }
+  }
+}
