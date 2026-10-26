@@ -38,7 +38,8 @@ service cloud.firestore {
 
     // Ventas: el admin ve todas; cada cliente solo las suyas. Son inmutables.
     match /sales/{id} {
-      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      // resource == null permite consultar un id que aún no existe (así la compra detecta reintentos).
+      allow read: if isAdmin() || (signedIn() && (resource == null || resource.data.userId == request.auth.uid));
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if false;
     }
@@ -47,7 +48,8 @@ service cloud.firestore {
     match /counters/{id} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.last == 1;
-      allow update: if signedIn() && request.resource.data.last == resource.data.last + 1;
+      // get('last', 0) tolera un contador sin el campo (p. ej. si se editó a mano en la consola).
+      allow update: if signedIn() && request.resource.data.last == resource.data.get('last', 0) + 1;
       allow delete: if false;
     }
   }

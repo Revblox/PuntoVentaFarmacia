@@ -24,6 +24,10 @@ Los clientes se registran solos desde "Crear cuenta". El admin puede crear cuent
 - Pendiente en consola: habilitar Authentication con correo/contraseña (paso 2 de abajo) y promover al primer admin.
 - Para publicar cambios: `firebase deploy --only hosting` (o `firestore:rules` si cambias las reglas).
 
+## Validación de transacciones y red
+
+La lógica de compra vive en `public/checkout.js` y es **idempotente**: cada intento de pago lleva un `saleId`; si la red se corta después de que el servidor confirmó y el usuario reintenta, la venta no se duplica. Si no hay conexión, la app lo avisa y bloquea el pago. Las pruebas automáticas (`tests/`, ver `tests/README.md`) cubren caída de red, respuesta perdida, doble clic, atomicidad, concurrencia y reglas de seguridad: `cd tests && npm install && npm test`.
+
 ## Puesta en marcha (desde cero)
 
 1. **Crear el proyecto** en <https://console.firebase.google.com> (puedes desactivar Analytics).

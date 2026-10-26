@@ -279,3 +279,8 @@
   .pass-wrap input { width: 100%; padding-right: 44px !important; }
   .pass-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--text-2); }
   .pass-toggle:hover { color: var(--text); background: var(--sep); }
+
+  /* ---------- Aviso sin conexión ---------- */
+  .netbar { position: fixed; top: 0; left: 0; right: 0; z-index: 70; display: none; align-items: center; justify-content: center; gap: 8px; padding: 9px 16px; background: var(--danger); color: #fff; font-size: 13px; font-weight: 600; }
+  .netbar.show { display: flex; }
+  .netbar .mi { font-size: 18px; }

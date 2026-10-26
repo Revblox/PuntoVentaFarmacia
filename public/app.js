@@ -7,6 +7,7 @@ import {
   writeBatch, increment, serverTimestamp, query, where, orderBy, limit,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
+import { SaleError, r2, expState, isNetworkError, createCheckout } from './checkout.js';
 
 /* ================= Utilidades ================= */
 const STORE_NAME = 'Farmacia';
@@ -14,7 +15,6 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const fmt = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
 const money = n => fmt.format(n || 0);
-const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const dayKey = d => { d = new Date(d); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -57,12 +57,6 @@ const SEED = () => {
     P('7501010', 'Amoxicilina 500 mg', 'Caja con 12 cápsulas', 'antibioticos', 138, 20, 6, 360, true),
   ];
 };
-
-function expState(p) {
-  if (!p.expiry) return { s: 'none', days: null };
-  const days = Math.floor((new Date(p.expiry + 'T23:59:59') - new Date()) / 864e5);
-  return { s: days < 0 ? 'expired' : days <= 60 ? 'soon' : 'ok', days };
-}
 
 let toastT;
 function toast(msg) {
@@ -228,6 +222,7 @@ function startSession() {
   showScreen('app');
   listen();
   go('pos');
+  setNet();
 }
 
 function listen() {
@@ -261,9 +256,18 @@ function listen() {
   }
 }
 
+// Aviso permanente cuando el navegador no tiene internet (las compras requieren servidor).
+function setNet() {
+  const off = !navigator.onLine;
+  $('#netbar').classList.toggle('show', off);
+  setLive(S.liveOk);
+  updateCart();
+}
+
 function setLive(ok) {
   S.liveOk = ok;
-  const l = $('#live'); if (l) { l.classList.toggle('off', !ok); l.lastChild.textContent = ok ? 'En vivo' : 'Sin conexión'; }
+  const up = ok && navigator.onLine;
+  const l = $('#live'); if (l) { l.classList.toggle('off', !up); l.lastChild.textContent = up ? 'En vivo' : 'Sin conexión'; }
 }
 
 /* ================= Navegación ================= */
@@ -430,62 +434,45 @@ function updateCart() {
 
   const payOk = !cash || (received != null && change >= 0);
   const rxOk = !rx || $('#rxOk').checked;
-  $('#payBtn').disabled = busy || !(cart.length && payOk && rxOk);
-  $('#payBtn').textContent = busy ? 'Procesando…' : cart.length ? `${isAdmin() ? 'Cobrar' : 'Pagar'} ${money(t.total)}` : isAdmin() ? 'Cobrar' : 'Pagar';
+  const online = navigator.onLine;
+  $('#payBtn').disabled = busy || !online || !(cart.length && payOk && rxOk);
+  $('#payBtn').textContent = !online ? 'Sin conexión' : busy ? 'Procesando…' : cart.length ? `${isAdmin() ? 'Cobrar' : 'Pagar'} ${money(t.total)}` : isAdmin() ? 'Cobrar' : 'Pagar';
 }
 
-class SaleError extends Error {}
+const doCheckout = createCheckout({ doc, collection, runTransaction, serverTimestamp });
 
-// La compra es una transacción de Firestore: lee el stock vigente, valida y descuenta en una sola operación atómica.
-// Si otro usuario modifica el mismo producto mientras tanto, Firestore reintenta la transacción con datos frescos,
-// por lo que dos compras simultáneas de la última pieza nunca pueden ganar las dos.
+// Identificador del intento de pago en curso. Si la red falla y el usuario vuelve a pagar el MISMO pedido,
+// se reutiliza el id: si la venta ya se había guardado, el servidor la devuelve en lugar de duplicarla.
+let pendingSale = null;
+
 async function checkout() {
   if (busy || !cart.length) return;
+  if (!navigator.onLine) return toast('Sin conexión: espera a que regrese internet para pagar');
   const lines = cart.map(l => ({ id: l.id, qty: l.qty }));
   const pct = totals().pct;
   const cash = isAdmin() && method === 'Efectivo';
   const recv = received;
+  const sig = JSON.stringify({ lines, pct, method, cash, recv });
+  if (!pendingSale || pendingSale.sig !== sig) pendingSale = { id: doc(collection(db, 'sales')).id, sig };
   busy = true; updateCart();
   try {
-    const sale = await runTransaction(db, async tx => {
-      const counterRef = doc(db, 'counters', 'sales');
-      const refs = lines.map(l => doc(db, 'products', l.id));
-      const snaps = await Promise.all(refs.map(r => tx.get(r)));
-      const cSnap = await tx.get(counterRef);
-
-      const items = []; let sub = 0;
-      snaps.forEach((s, i) => {
-        if (!s.exists()) throw new SaleError('Un producto de tu pedido ya no está disponible');
-        const p = s.data();
-        if (expState(p).s === 'expired') throw new SaleError(`${p.name} está caducado`);
-        if (p.stock < lines[i].qty) throw new SaleError(p.stock > 0 ? `Solo quedan ${p.stock} de ${p.name}` : `${p.name} se agotó`);
-        items.push({ id: s.id, name: p.name, qty: lines[i].qty, price: p.price });
-        sub += lines[i].qty * p.price;
-      });
-      sub = r2(sub);
-      const dAmt = r2(sub * pct / 100), total = r2(sub - dAmt);
-      if (cash && (recv == null || recv < total)) throw new SaleError('El monto recibido es menor al total');
-
-      const folio = (cSnap.exists() ? cSnap.data().last : 0) + 1;
-      snaps.forEach((s, i) => tx.update(refs[i], { stock: s.data().stock - lines[i].qty, updatedAt: serverTimestamp() }));
-      tx.set(counterRef, { last: folio });
-      const saleRef = doc(collection(db, 'sales'));
-      const data = {
-        folio, items, subtotal: sub, discount: dAmt, total, method,
-        received: cash ? recv : total, change: cash ? r2(recv - total) : 0,
-        userId: S.user.uid, userName: S.profile.name, role: S.profile.role, createdAt: serverTimestamp(),
-      };
-      tx.set(saleRef, data);
-      return { id: saleRef.id, ...data, _d: new Date() };
+    const sale = await doCheckout(db, {
+      saleId: pendingSale.id, lines, pct, method, cash, recv, user: S.user, profile: S.profile,
     });
+    pendingSale = null;
     cart = []; received = null; discount = 0;
     $('#received').value = ''; $('#disc').value = 0;
     busy = false; updateCart(); renderGrid();
     showTicket(sale, true);
+    if (sale.duplicate) toast('Tu pago ya se había registrado: no se cobró doble');
   } catch (ex) {
     busy = false;
+    console.error('Checkout falló:', ex.code, ex.message, ex);
+    if (ex instanceof SaleError) pendingSale = null;
     reconcileCart();
-    toast(ex instanceof SaleError ? ex.message : AUTH_ERR[ex.code] || 'No se pudo completar la compra, intenta de nuevo');
+    toast(ex instanceof SaleError ? ex.message
+      : isNetworkError(ex) ? 'Se perdió la conexión. Tu pedido sigue aquí: vuelve a pagar cuando regrese internet, no se cobrará doble'
+      : `${AUTH_ERR[ex.code] || 'No se pudo completar la compra, intenta de nuevo'} [${ex.code || ex.name}]`);
     updateCart(); renderGrid();
   }
 }
@@ -505,6 +492,8 @@ function bindStaticEvents() {
   $('#rxOk').addEventListener('change', updateCart);
   $('#clearCart').onclick = () => { cart = []; received = null; $('#received').value = ''; updateCart(); renderGrid(); };
   $('#payBtn').onclick = checkout;
+  window.addEventListener('offline', () => { setNet(); toast('Sin conexión'); });
+  window.addEventListener('online', () => { setNet(); toast('Conexión restablecida'); });
   $('#invQ').addEventListener('input', renderInventory);
   $('#newProduct').onclick = () => productForm();
   $('#newUser').onclick = userForm;

@@ -1,0 +1,11 @@
+{
+  "name": "pos-farmacia-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-farmacia --config ../firebase.json \"node red.test.mjs\""
+  },
+  "devDependencies": {
+    "firebase": "10.14.1"
+  }
+}
